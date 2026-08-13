@@ -36,9 +36,9 @@ def N_(x):
 
 
 def evcode_to_str(evcode: int) -> str:
-    # Values in ecodes.keys are stored as either a str or list[str].
+    # Values in ecodes.keys are stored as either a str or a sequence of aliases.
     value = ecodes.keys[evcode]
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return value[0]
     return value
 
@@ -642,6 +642,9 @@ class RatbagdButton(metaclass=MetaRatbag):
         KEY_PRESS = libratbag.RATBAG_MACRO_EVENT_KEY_PRESSED
         KEY_RELEASE = libratbag.RATBAG_MACRO_EVENT_KEY_RELEASED
         WAIT = libratbag.RATBAG_MACRO_EVENT_WAIT
+        WAIT_FOR_RELEASE = libratbag.RATBAG_MACRO_EVENT_WAIT_FOR_RELEASE
+        REPEAT_WHILE_PRESSED = libratbag.RATBAG_MACRO_EVENT_REPEAT_WHILE_PRESSED
+        REPEAT_UNTIL_CANCELED = libratbag.RATBAG_MACRO_EVENT_REPEAT_UNTIL_CANCELED
 
     """A table mapping a button's index to its usual function as defined by X
     and the common desktop environments."""
@@ -789,6 +792,9 @@ class RatbagdMacro(metaclass=MetaRatbag):
         RatbagdButton.Macro.KEY_PRESS: lambda key: f"↓{evcode_to_str(key)}",
         RatbagdButton.Macro.KEY_RELEASE: lambda key: f"↑{evcode_to_str(key)}",
         RatbagdButton.Macro.WAIT: lambda val: f"{val}ms",
+        RatbagdButton.Macro.WAIT_FOR_RELEASE: lambda _val: "wait-for-release",
+        RatbagdButton.Macro.REPEAT_WHILE_PRESSED: lambda _val: "repeat-while-pressed",
+        RatbagdButton.Macro.REPEAT_UNTIL_CANCELED: lambda _val: "repeat-until-canceled",
         _MACRO_KEY: lambda key: f"↕{evcode_to_str(key)}",
     }
 
@@ -834,11 +840,18 @@ class RatbagdMacro(metaclass=MetaRatbag):
 
         for i in range(libratbag.ratbag_button_macro_get_num_events(macro_object)):
             type = libratbag.ratbag_button_macro_get_event_type(macro_object, i)
+            if type == RatbagdButton.Macro.NONE:
+                break
             value = None
             if type == RatbagdButton.Macro.WAIT:
                 value = libratbag.ratbag_button_macro_get_event_timeout(macro_object, i)
-            else:
+            elif type in (
+                RatbagdButton.Macro.KEY_PRESS,
+                RatbagdButton.Macro.KEY_RELEASE,
+            ):
                 value = libratbag.ratbag_button_macro_get_event_key(macro_object, i)
+            else:
+                value = 0
             ratbagd_macro.append(type, value)
         return ratbagd_macro
 

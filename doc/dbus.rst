@@ -469,16 +469,24 @@ org.freedesktop.ratbag1.Button
         (``u``) denoting the special value to map to.
 
         If the ActionType is *Macro*, the variant is an array of integer
-        tuples (``a(uu)``) where each tuple is ``(type, keycode)`` and the
+        tuples (``a(uu)``) where each tuple is ``(type, value)`` and the
         type is one of the following:
 
-        +---------+--------------------------------------+
-        | Value   | Description                          |
-        +=========+======================================+
-        |   0     | Key release event                    |
-        +---------+--------------------------------------+
-        |   1     | Key press event                      |
-        +---------+--------------------------------------+
+        +---------+----------------------------------------+
+        | Value   | Description                            |
+        +=========+========================================+
+        |   1     | Key/button press; value is EV_KEY code |
+        +---------+----------------------------------------+
+        |   2     | Key/button release; value is EV_KEY    |
+        +---------+----------------------------------------+
+        |   3     | Delay; value is milliseconds           |
+        +---------+----------------------------------------+
+        |   4     | Wait for trigger release; value is 0   |
+        +---------+----------------------------------------+
+        |   5     | Repeat while trigger is held; value 0  |
+        +---------+----------------------------------------+
+        |   6     | Repeat until canceled; value is 0      |
+        +---------+----------------------------------------+
 
         If the ActionType is *None*, the variant is an unsigned integer
         (``u``) of value 0.

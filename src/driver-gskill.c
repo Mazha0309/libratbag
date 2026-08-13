@@ -849,8 +849,11 @@ gskill_macro_to_report(struct ratbag_device *device,
 		case RATBAG_MACRO_EVENT_KEY_PRESSED:
 		case RATBAG_MACRO_EVENT_KEY_RELEASED:
 			buf[profile_pos] = gskill_macro_code_from_event(device,
-									event);
+								event);
 			break;
+		case RATBAG_MACRO_EVENT_WAIT_FOR_RELEASE:
+		case RATBAG_MACRO_EVENT_REPEAT_WHILE_PRESSED:
+		case RATBAG_MACRO_EVENT_REPEAT_UNTIL_CANCELED:
 		case RATBAG_MACRO_EVENT_INVALID:
 		case RATBAG_MACRO_EVENT_NONE:
 			goto out;

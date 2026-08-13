@@ -153,12 +153,15 @@ Set the button action to the given macro
 .PP
 .B Macro syntax:
 .HP 8
-A macro is a series of key events or waiting periods. Keys must be specified
+A macro is a series of key/button events, waiting periods, and controls. Keys must be specified
 in linux/input-event-codes.h key names.
 .RS
 .TP 8
 .B KEY_A
 Press and release 'a'
+.TP 8
+.B BTN_LEFT
+Press and release the left mouse button
 .TP 8
 .B +KEY_A
 Press 'a'
@@ -168,6 +171,15 @@ Release 'a'
 .TP 8
 .B t300
 Wait 300ms
+.TP 8
+.B wait-for-release
+Wait until the trigger button is released
+.TP 8
+.B repeat-while-pressed
+Repeat from the beginning while held
+.TP 8
+.B repeat-until-canceled
+Repeat from the beginning until triggered again
 .RE
 .SH LED Commands
 LED commands work on the given profile, or on the active profile if none is

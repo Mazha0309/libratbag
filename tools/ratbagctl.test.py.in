@@ -689,6 +689,14 @@ class TestRatbagCtlButton(TestRatbagCtl):
         self.launch_good_test("test_device " + command + "t100 t200")
         r = self.launch_good_test("test_device button 2 get")
         self.assertEqual(r, "Button: 2 is mapped to macro '100ms 200ms'")
+        self.launch_good_test(
+            "test_device " + command + "BTN_LEFT t25 repeat-while-pressed"
+        )
+        r = self.launch_good_test("test_device button 2 get")
+        self.assertEqual(
+            r,
+            "Button: 2 is mapped to macro '↕BTN_LEFT 25ms Repeat while held'",
+        )
         self.launch_good_test("test_device " + command + "KeY_z")
         r = self.launch_good_test("test_device button 2 get")
         self.assertEqual(r, "Button: 2 is mapped to macro '↕KEY_Z'")

@@ -420,11 +420,19 @@ def func_button_action_set_macro(ratbagd: Ratbagd, args: argparse.Namespace) -> 
     macro_keys = args.target_macro
     macro = RatbagdMacro()
     for s in macro_keys:
+        control_events = {
+            "WAIT-FOR-RELEASE": RatbagdButton.Macro.WAIT_FOR_RELEASE,
+            "REPEAT-WHILE-PRESSED": RatbagdButton.Macro.REPEAT_WHILE_PRESSED,
+            "REPEAT-UNTIL-CANCELED": RatbagdButton.Macro.REPEAT_UNTIL_CANCELED,
+        }
         is_press = True
         is_release = True
         is_timeout = False
 
         s = s.upper()
+        if s in control_events:
+            macro.append(control_events[s], 0)
+            continue
         if s[0] == "T":
             is_timeout = True
             is_press = False
@@ -1251,12 +1259,16 @@ active profile if none is given.""",
                                     help_str: """Set the button action to the given macro
 
   Macro syntax:
-        A macro is a series of key events or waiting periods.
+        A macro is a series of key/button events, waiting periods, and controls.
         Keys must be specified in linux/input-event-codes.h key names.
         KEY_A                   Press and release 'a'
+        BTN_LEFT                Press and release the left mouse button
         +KEY_A                  Press 'a'
         -KEY_A                  Release 'a'
-        t300                    Wait 300ms""",
+        t300                    Wait 300ms
+        wait-for-release        Wait until the trigger button is released
+        repeat-while-pressed    Repeat from the beginning while held
+        repeat-until-canceled   Repeat until triggered again""",
                                     pos_args: [
                                         {
                                             of_type: argument,

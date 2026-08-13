@@ -179,21 +179,31 @@ button_action_macro_to_str(struct ratbag_button *button)
 		}
 
 		enum ratbag_macro_event_type type = ratbag_button_macro_get_event_type(macro, i);
-		int key = ratbag_button_macro_get_event_key(macro, i);
-		int timeout = ratbag_button_macro_get_event_timeout(macro, i);
-
+		int key, timeout;
 		if (type == RATBAG_MACRO_EVENT_NONE)
 			break;
 
 		switch (type) {
 		case RATBAG_MACRO_EVENT_KEY_PRESSED:
+			key = ratbag_button_macro_get_event_key(macro, i);
 			offset += snprintf(str + offset, sizeof(str) - offset, " %s↓", strip_ev_key(key));
 			break;
 		case RATBAG_MACRO_EVENT_KEY_RELEASED:
+			key = ratbag_button_macro_get_event_key(macro, i);
 			offset += snprintf(str + offset, sizeof(str) - offset, " %s↑", strip_ev_key(key));
 			break;
 		case RATBAG_MACRO_EVENT_WAIT:
+			timeout = ratbag_button_macro_get_event_timeout(macro, i);
 			offset += snprintf(str + offset, sizeof(str) - offset, " %.03f⏱", timeout / 1000.0);
+			break;
+		case RATBAG_MACRO_EVENT_WAIT_FOR_RELEASE:
+			offset += snprintf(str + offset, sizeof(str) - offset, " wait-for-release");
+			break;
+		case RATBAG_MACRO_EVENT_REPEAT_WHILE_PRESSED:
+			offset += snprintf(str + offset, sizeof(str) - offset, " repeat-while-pressed");
+			break;
+		case RATBAG_MACRO_EVENT_REPEAT_UNTIL_CANCELED:
+			offset += snprintf(str + offset, sizeof(str) - offset, " repeat-until-canceled");
 			break;
 		default:
 			offset += snprintf(str + offset, sizeof(str) - offset, " ###");

@@ -653,10 +653,9 @@ union hidpp20_button_binding {
 		uint8_t profile;
 	} __attribute__((packed)) special;
 	struct {
-		uint8_t type; /* HIDPP20_BUTTON_MACRO */
+		uint8_t type; /* HIDPP20_BUTTON_MACRO, also the memory type */
 		uint8_t page;
-		uint8_t zero;
-		uint8_t offset;
+		uint16_t offset;
 	} __attribute__((packed)) macro;
 	struct {
 		uint8_t type; /* PROFILE_BUTTON_TYPE_DISABLED */
@@ -851,6 +850,7 @@ struct hidpp20_led {
 
 
 union hidpp20_macro_data {
+	uint8_t raw[5];
 	struct {
 		uint8_t type;
 	} __attribute__((packed)) any;
@@ -864,15 +864,37 @@ union hidpp20_macro_data {
 		uint8_t key;
 	} __attribute__((packed)) key;
 	struct {
+		uint8_t type; /* HIDPP20_MACRO_BUTTON_DOWN or HIDPP20_MACRO_BUTTON_UP */
+		uint16_t buttons;
+	} __attribute__((packed)) button;
+	struct {
+		uint8_t type; /* HIDPP20_MACRO_CONS_DOWN or HIDPP20_MACRO_CONS_UP */
+		uint16_t control;
+	} __attribute__((packed)) consumer;
+	struct {
+		uint8_t type; /* HIDPP20_MACRO_ROLLER or HIDPP20_MACRO_ACPAN */
+		int8_t movement;
+	} __attribute__((packed)) roller;
+	struct {
 		uint8_t type; /* HIDPP20_MACRO_JUMP */
-		uint8_t offset;
+		uint8_t memory_type;
 		uint8_t page;
+		uint16_t offset;
 	} __attribute__((packed)) jump;
+	struct {
+		uint8_t type; /* HIDPP20_MACRO_XY */
+		int16_t x;
+		int16_t y;
+	} __attribute__((packed)) xy;
 	struct {
 		uint8_t type; /* HIDPP20_MACRO_END */
 	} __attribute__((packed)) end;
 } __attribute__((packed));
-_Static_assert(sizeof(union hidpp20_macro_data) == 3, "Invalid size");
+_Static_assert(sizeof(union hidpp20_macro_data) == 5, "Invalid size");
+
+int
+hidpp20_onboard_profiles_serialize_macro_item(const union hidpp20_macro_data *item,
+					      uint8_t *data);
 
 struct hidpp20_profile {
 	uint16_t address;
@@ -887,6 +909,10 @@ struct hidpp20_profile {
 	uint16_t dpi[HIDPP20_DPI_COUNT];
 	union hidpp20_button_binding buttons[32];
 	union hidpp20_macro_data *macros[32];
+	uint16_t macro_lengths[32];
+	uint16_t macro_sectors[32];
+	uint16_t macro_offsets[32];
+	bool macro_sector_usage[UINT8_MAX + 1];
 	struct hidpp20_led leds[HIDPP20_LED_COUNT];
 	struct hidpp20_led alt_leds[HIDPP20_LED_COUNT];
 };
@@ -919,6 +945,8 @@ struct hidpp20_profiles {
 	uint8_t sector_count;
 	uint16_t sector_size;
 	uint8_t active_profile_index;
+	bool *macro_sectors_in_use;
+	bool *macro_sectors_pending;
 	struct hidpp20_profile *profiles;
 };
 

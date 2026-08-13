@@ -34,6 +34,7 @@
 #include <sys/resource.h>
 
 #include "libratbag-util.h"
+#include "hidpp20.h"
 
 START_TEST(dpi_range_parser)
 {
@@ -75,6 +76,40 @@ START_TEST(dpi_range_parser)
 
 		free(range);
 	}
+}
+END_TEST
+
+START_TEST(hidpp20_macro_serializer)
+{
+	const uint8_t expected[] = {
+		HIDPP20_MACRO_BUTTON_DOWN, 0x00, 0x01,
+		HIDPP20_MACRO_DELAY, 0x00, 0x19,
+		HIDPP20_MACRO_BUTTON_UP, 0x00, 0x01,
+		HIDPP20_MACRO_DELAY, 0x00, 0x19,
+		HIDPP20_MACRO_REPEAT_WHILE_PRESSED,
+		HIDPP20_MACRO_END,
+	};
+	union hidpp20_macro_data macro[] = {
+		{ .button = { HIDPP20_MACRO_BUTTON_DOWN, 1 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 25 } },
+		{ .button = { HIDPP20_MACRO_BUTTON_UP, 1 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 25 } },
+		{ .any = { HIDPP20_MACRO_REPEAT_WHILE_PRESSED } },
+		{ .any = { HIDPP20_MACRO_END } },
+	};
+	uint8_t data[sizeof(expected)] = {0};
+	unsigned int offset = 0;
+
+	for (unsigned int i = 0; i < ARRAY_LENGTH(macro); i++) {
+		int size = hidpp20_onboard_profiles_serialize_macro_item(&macro[i],
+									 &data[offset]);
+
+		ck_assert_int_gt(size, 0);
+		offset += size;
+	}
+
+	ck_assert_uint_eq(offset, sizeof(expected));
+	ck_assert_mem_eq(data, expected, sizeof(expected));
 }
 END_TEST
 
@@ -132,6 +167,7 @@ test_context_suite(void)
 	tc = tcase_create("util");
 	tcase_add_test(tc, dpi_range_parser);
 	tcase_add_test(tc, dpi_list_parser);
+	tcase_add_test(tc, hidpp20_macro_serializer);
 
 	suite_add_tcase(s, tc);
 	return s;

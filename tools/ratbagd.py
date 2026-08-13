@@ -36,9 +36,9 @@ def N_(x):
 
 
 def evcode_to_str(evcode: int) -> str:
-    # Values in ecodes.keys are stored as either a str or list[str].
+    # Values in ecodes.keys are stored as either a str or a sequence of aliases.
     value = ecodes.keys[evcode]
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return value[0]
     return value
 
@@ -849,6 +849,9 @@ class RatbagdButton(_RatbagdDBus):
         KEY_PRESS = 1
         KEY_RELEASE = 2
         WAIT = 3
+        WAIT_FOR_RELEASE = 4
+        REPEAT_WHILE_PRESSED = 5
+        REPEAT_UNTIL_CANCELED = 6
 
     """A table mapping a button's index to its usual function as defined by X
     and the common desktop environments."""
@@ -1013,6 +1016,11 @@ class RatbagdMacro(GObject.Object):
         RatbagdButton.Macro.KEY_PRESS: lambda key: f"↓{evcode_to_str(key)}",
         RatbagdButton.Macro.KEY_RELEASE: lambda key: f"↑{evcode_to_str(key)}",
         RatbagdButton.Macro.WAIT: lambda val: f"{val}ms",
+        RatbagdButton.Macro.WAIT_FOR_RELEASE: lambda _val: _("Wait for release"),
+        RatbagdButton.Macro.REPEAT_WHILE_PRESSED: lambda _val: _("Repeat while held"),
+        RatbagdButton.Macro.REPEAT_UNTIL_CANCELED: lambda _val: _(
+            "Repeat until canceled"
+        ),
         _MACRO_KEY: lambda key: f"↕{evcode_to_str(key)}",
     }
 

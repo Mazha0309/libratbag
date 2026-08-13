@@ -1772,6 +1772,11 @@ ratbag_button_macro_set_event(struct ratbag_button_macro *m,
 		macro->events[index].type = type;
 		macro->events[index].event.timeout = data;
 		break;
+	case RATBAG_MACRO_EVENT_WAIT_FOR_RELEASE:
+	case RATBAG_MACRO_EVENT_REPEAT_WHILE_PRESSED:
+	case RATBAG_MACRO_EVENT_REPEAT_UNTIL_CANCELED:
+		macro->events[index].type = type;
+		break;
 	case RATBAG_MACRO_EVENT_NONE:
 		macro->events[index].type = type;
 		break;
@@ -1949,7 +1954,9 @@ ratbag_action_macro_num_keys(const struct ratbag_button_action *action)
 		    event.type == RATBAG_MACRO_EVENT_INVALID) {
 			break;
 		}
-		if (ratbag_key_is_modifier(event.event.key)) {
+		if ((event.type == RATBAG_MACRO_EVENT_KEY_PRESSED ||
+		     event.type == RATBAG_MACRO_EVENT_KEY_RELEASED) &&
+		    ratbag_key_is_modifier(event.event.key)) {
 			continue;
 		}
 		if (event.type == RATBAG_MACRO_EVENT_KEY_PRESSED) {
@@ -2022,8 +2029,15 @@ ratbag_action_keycode_from_macro(const struct ratbag_button_action *action,
 				*modifiers_out = modifiers;
 				return 1;
 			}
-		case RATBAG_MACRO_EVENT_WAIT:
 			break;
+		case RATBAG_MACRO_EVENT_WAIT:
+			/* A timed macro must stay a macro. Collapsing it into a plain
+			 * key binding would silently discard its playback timing. */
+			return -EINVAL;
+		case RATBAG_MACRO_EVENT_WAIT_FOR_RELEASE:
+		case RATBAG_MACRO_EVENT_REPEAT_WHILE_PRESSED:
+		case RATBAG_MACRO_EVENT_REPEAT_UNTIL_CANCELED:
+			return -EINVAL;
 		default:
 			return -EINVAL;
 		}

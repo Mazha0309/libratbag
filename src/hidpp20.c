@@ -2294,6 +2294,8 @@ hidpp20_onboard_profiles_allocate(struct hidpp20_device *device,
 	profiles->has_g_shift = (info.mechanical_layout & 0x03) == 0x02;
 	profiles->has_dpi_shift = ((info.mechanical_layout & 0x0c) >> 2) == 0x02;
 	profiles->active_profile_index = active_profile_index;
+	profiles->macro_sectors_in_use = zalloc(info.sector_count * sizeof(bool));
+	profiles->macro_sectors_pending = zalloc(info.sector_count * sizeof(bool));
 	switch(info.various_info & 0x07) {
 	case 1:
 		profiles->corded = 1;
@@ -2313,107 +2315,136 @@ hidpp20_onboard_profiles_allocate(struct hidpp20_device *device,
 }
 
 static int
+hidpp20_onboard_profiles_macro_size(uint8_t type)
+{
+	switch (type) {
+	case HIDPP20_MACRO_NOOP:
+	case HIDPP20_MACRO_WAIT_FOR_RELEASE:
+	case HIDPP20_MACRO_REPEAT_WHILE_PRESSED:
+	case HIDPP20_MACRO_REPEAT_UNTIL_CANCELED:
+	case HIDPP20_MACRO_END:
+		return 1;
+	case HIDPP20_MACRO_ROLLER:
+	case HIDPP20_MACRO_ACPAN:
+		return 2;
+	case HIDPP20_MACRO_DELAY:
+	case HIDPP20_MACRO_BUTTON_DOWN:
+	case HIDPP20_MACRO_BUTTON_UP:
+	case HIDPP20_MACRO_KEY_PRESS:
+	case HIDPP20_MACRO_KEY_RELEASE:
+	case HIDPP20_MACRO_CONS_DOWN:
+	case HIDPP20_MACRO_CONS_UP:
+		return 3;
+	case HIDPP20_MACRO_JUMP:
+	case HIDPP20_MACRO_XY:
+		return 5;
+	default:
+		return -EINVAL;
+	}
+}
+
+static int
 hidpp20_onboard_profiles_macro_next(struct hidpp20_device *device,
-				    uint8_t memory[32],
+				    const uint8_t *memory,
+				    uint16_t sector_size,
 				    uint16_t *index,
 				    union hidpp20_macro_data *macro)
 {
-	int rc = 0;
-	unsigned int step = 1;
+	uint16_t usable_size = sector_size - sizeof(uint16_t);
+	int step;
 
-	if (*index >= 32 - sizeof(union hidpp20_macro_data)) {
-		hidpp_log_error(&device->base, "error while parsing macro.\n");
+	if (*index >= usable_size) {
+		hidpp_log_error(&device->base, "macro address is outside the sector\n");
 		return -EFAULT;
 	}
 
-	memcpy(macro, &memory[*index], sizeof(union hidpp20_macro_data));
-
-	switch (macro->any.type) {
-	case HIDPP20_MACRO_DELAY:
-		/* fallthrough */
-	case HIDPP20_MACRO_KEY_PRESS:
-		/* fallthrough */
-	case HIDPP20_MACRO_KEY_RELEASE:
-		/* fallthrough */
-	case HIDPP20_MACRO_JUMP:
-		step = 3;
-		rc = -EAGAIN;
-		break;
-	case HIDPP20_MACRO_NOOP:
-		step = 1;
-		rc = -EAGAIN;
-		break;
-	case HIDPP20_MACRO_END:
-		return 0;
-	default:
-		hidpp_log_error(&device->base, "unknown tag: 0x%02x\n", macro->any.type);
-		rc = -EFAULT;
+	step = hidpp20_onboard_profiles_macro_size(memory[*index]);
+	if (step < 0) {
+		hidpp_log_error(&device->base, "unknown macro tag: 0x%02x\n", memory[*index]);
+		return -EFAULT;
 	}
 
-	if ((*index + step) & 0xF0)
-		/* the next item will be on the following chunk */
-		return -ENOMEM;
+	if (*index + step > usable_size) {
+		hidpp_log_error(&device->base, "macro item crosses the sector CRC\n");
+		return -EFAULT;
+	}
 
+	memset(macro, 0, sizeof(*macro));
+	memcpy(macro->raw, &memory[*index], step);
 	*index += step;
 
-	return rc;
+	return macro->any.type == HIDPP20_MACRO_END ? 0 : -EAGAIN;
 }
 
 static int
 hidpp20_onboard_profiles_read_macro(struct hidpp20_device *device,
 				    struct hidpp20_profiles *profiles,
-				    uint8_t page, uint8_t offset,
+				    uint16_t sector, uint16_t offset,
+				    bool sector_usage[UINT8_MAX + 1],
 				    union hidpp20_macro_data **return_macro)
 {
 	_cleanup_free_ uint8_t *memory = NULL;
 	union hidpp20_macro_data *macro = NULL;
 	unsigned count = 0;
 	unsigned index = 0;
+	unsigned jump_count = 0;
 	uint16_t mem_index = offset;
-	int rc = -ENOMEM;
+	bool read_sector = true;
+	int rc;
 
 	memory = hidpp20_onboard_profiles_allocate_sector(profiles);
 
 	do {
+		if (index >= MAX_MACRO_EVENTS + 1) {
+			hidpp_log_error(&device->base, "macro exceeds %u items\n", MAX_MACRO_EVENTS);
+			rc = -E2BIG;
+			goto out_err;
+		}
+
 		if (count == index) {
 			union hidpp20_macro_data *tmp;
 
-			count += 32;
+			count = min(count + 32, MAX_MACRO_EVENTS + 1);
 			/* manual realloc to have the memory zero-initialized */
 			tmp = zalloc(count * sizeof(union hidpp20_macro_data));
 			if (macro) {
-				memcpy(tmp, macro, (count - 32) * sizeof(union hidpp20_macro_data));
+				memcpy(tmp, macro, index * sizeof(union hidpp20_macro_data));
 				free(macro);
 			}
 			macro = tmp;
 		}
 
-		if (rc == -ENOMEM) {
+		if (read_sector) {
+			if ((sector >> 8) == 0 && sector < profiles->sector_count) {
+				profiles->macro_sectors_in_use[sector] = true;
+				sector_usage[sector] = true;
+			}
 			rc = hidpp20_onboard_profiles_read_sector(device,
-								  page,
+								  sector,
 								  profiles->sector_size,
 								  memory);
 			if (rc)
 				goto out_err;
+			read_sector = false;
 		}
 
 		rc = hidpp20_onboard_profiles_macro_next(device,
 							 memory,
+							 profiles->sector_size,
 							 &mem_index,
 							 &macro[index]);
 		if (rc == -EFAULT)
 			goto out_err;
-		if (rc == -ENOMEM) {
-			mem_index = 0;
-			page++;
-		} else if (macro[index].any.type == HIDPP20_MACRO_JUMP) {
-			page = macro[index].jump.page;
-			offset = macro[index].jump.offset;
-			mem_index = offset;
+		if (macro[index].any.type == HIDPP20_MACRO_JUMP) {
+			if (++jump_count > profiles->sector_count) {
+				rc = -ELOOP;
+				goto out_err;
+			}
+			sector = ((uint16_t)macro[index].jump.memory_type << 8) |
+				 macro[index].jump.page;
+			mem_index = get_unaligned_be_u16((const uint8_t *)&macro[index].jump.offset);
 			/* no need to store the jump in memory */
-			index--;
-			/* force memory fetching */
-			rc = -ENOMEM;
+			read_sector = true;
 		} else {
 			index++;
 		}
@@ -2431,14 +2462,20 @@ out_err:
 static int
 hidpp20_onboard_profiles_parse_macro(struct hidpp20_device *device,
 				     struct hidpp20_profiles *profiles,
-				     uint8_t page, uint8_t offset,
+				     uint16_t sector, uint16_t offset,
+				     bool sector_usage[UINT8_MAX + 1],
 				     union hidpp20_macro_data **return_macro)
 {
 	union hidpp20_macro_data *m, *macro = NULL;
 	unsigned i, count = 0;
 	int rc;
 
-	rc = hidpp20_onboard_profiles_read_macro(device, profiles, page, offset, &macro);
+	rc = hidpp20_onboard_profiles_read_macro(device,
+						 profiles,
+						 sector,
+						 offset,
+						 sector_usage,
+						 &macro);
 	if (rc <= 0)
 		return rc;
 
@@ -2451,12 +2488,30 @@ hidpp20_onboard_profiles_parse_macro(struct hidpp20_device *device,
 		case HIDPP20_MACRO_DELAY:
 			m->delay.time = hidpp_be_u16_to_cpu(m->delay.time);
 			break;
-		case HIDPP20_MACRO_KEY_PRESS:
+		case HIDPP20_MACRO_BUTTON_DOWN:
+		case HIDPP20_MACRO_BUTTON_UP:
+			m->button.buttons = hidpp_be_u16_to_cpu(m->button.buttons);
 			break;
+		case HIDPP20_MACRO_KEY_PRESS:
 		case HIDPP20_MACRO_KEY_RELEASE:
 			break;
-		case HIDPP20_MACRO_JUMP:
+		case HIDPP20_MACRO_CONS_DOWN:
+		case HIDPP20_MACRO_CONS_UP:
+			m->consumer.control = hidpp_be_u16_to_cpu(m->consumer.control);
 			break;
+		case HIDPP20_MACRO_ROLLER:
+		case HIDPP20_MACRO_ACPAN:
+			break;
+		case HIDPP20_MACRO_JUMP:
+			m->jump.offset = hidpp_be_u16_to_cpu(m->jump.offset);
+			break;
+		case HIDPP20_MACRO_XY:
+			m->xy.x = hidpp_be_u16_to_cpu(m->xy.x);
+			m->xy.y = hidpp_be_u16_to_cpu(m->xy.y);
+			break;
+		case HIDPP20_MACRO_WAIT_FOR_RELEASE:
+		case HIDPP20_MACRO_REPEAT_WHILE_PRESSED:
+		case HIDPP20_MACRO_REPEAT_UNTIL_CANCELED:
 		case HIDPP20_MACRO_END:
 			break;
 		case HIDPP20_MACRO_NOOP:
@@ -2468,7 +2523,7 @@ hidpp20_onboard_profiles_parse_macro(struct hidpp20_device *device,
 
 	*return_macro = macro;
 
-	return 0;
+	return count;
 }
 
 static unsigned int
@@ -2506,6 +2561,8 @@ hidpp20_onboard_profiles_destroy(struct hidpp20_profiles *profiles_list)
 	}
 
 	free(profiles_list->profiles);
+	free(profiles_list->macro_sectors_in_use);
+	free(profiles_list->macro_sectors_pending);
 	free(profiles_list);
 }
 
@@ -2564,6 +2621,7 @@ hidpp20_buttons_to_cpu(struct hidpp20_device *device,
 	for (i = 0; i < count; i++) {
 		union hidpp20_button_binding *b = &buttons[i];
 		union hidpp20_button_binding *button = &profile->buttons[i];
+		int rc;
 
 		button->any.type = b->any.type;
 
@@ -2588,21 +2646,28 @@ hidpp20_buttons_to_cpu(struct hidpp20_device *device,
 			button->special.special = b->special.special;
 			button->special.profile = b->special.profile;
 			break;
-		case HIDPP20_BUTTON_MACRO:
+		case HIDPP20_BUTTON_MACRO ... 0x0f:
 			if (profile->macros[i]) {
 				free(profile->macros[i]);
 				profile->macros[i] = NULL;
 			}
-			hidpp20_onboard_profiles_parse_macro(device,
-							     profiles,
-							     b->macro.page,
-							     b->macro.offset,
-							     &profile->macros[i]);
+			profile->macro_lengths[i] = 0;
+			profile->macro_sectors[i] = ((uint16_t)b->macro.type << 8) |
+						    b->macro.page;
+			profile->macro_offsets[i] = hidpp_be_u16_to_cpu(b->macro.offset);
+			rc = hidpp20_onboard_profiles_parse_macro(device,
+							 profiles,
+							 profile->macro_sectors[i],
+							 profile->macro_offsets[i],
+							 profile->macro_sector_usage,
+							 &profile->macros[i]);
+			if (rc > 0)
+				profile->macro_lengths[i] = rc;
 
-			/* the actual page is stored in the 'zero' field */
+			/* Internally the page field indexes profile->macros. */
+			button->macro.type = HIDPP20_BUTTON_MACRO;
 			button->macro.page = i;
-			button->macro.offset = b->macro.offset;
-			button->macro.zero = b->macro.page;
+			button->macro.offset = 0;
 			break;
 		case HIDPP20_BUTTON_DISABLED:
 			break;
@@ -2652,10 +2717,9 @@ hidpp20_buttons_from_cpu(struct hidpp20_profile *profile,
 		case HIDPP20_BUTTON_DISABLED:
 			break;
 		case HIDPP20_BUTTON_MACRO:
-			/* the actual page is stored in the 'zero' field */
-			button->macro.page = b->macro.zero;
-			button->macro.offset = b->macro.offset;
-			button->macro.zero = 0;
+			button->macro.type = profile->macro_sectors[i] >> 8;
+			button->macro.page = profile->macro_sectors[i] & 0xff;
+			button->macro.offset = hidpp_cpu_to_be_u16(profile->macro_offsets[i]);
 			break;
 		default:
 			memcpy(b, button, sizeof(*b));
@@ -2925,6 +2989,231 @@ hidpp20_onboard_profiles_write_led(struct hidpp20_internal_led *internal_led,
 	}
 }
 
+int
+hidpp20_onboard_profiles_serialize_macro_item(const union hidpp20_macro_data *item,
+					      uint8_t *data)
+{
+	int size = hidpp20_onboard_profiles_macro_size(item->any.type);
+
+	if (size < 0)
+		return size;
+
+	data[0] = item->any.type;
+	switch (item->any.type) {
+	case HIDPP20_MACRO_DELAY:
+		set_unaligned_be_u16(&data[1], item->delay.time);
+		break;
+	case HIDPP20_MACRO_BUTTON_DOWN:
+	case HIDPP20_MACRO_BUTTON_UP:
+		set_unaligned_be_u16(&data[1], item->button.buttons);
+		break;
+	case HIDPP20_MACRO_KEY_PRESS:
+	case HIDPP20_MACRO_KEY_RELEASE:
+		data[1] = item->key.modifier;
+		data[2] = item->key.key;
+		break;
+	case HIDPP20_MACRO_CONS_DOWN:
+	case HIDPP20_MACRO_CONS_UP:
+		set_unaligned_be_u16(&data[1], item->consumer.control);
+		break;
+	case HIDPP20_MACRO_ROLLER:
+	case HIDPP20_MACRO_ACPAN:
+		data[1] = item->roller.movement;
+		break;
+	case HIDPP20_MACRO_JUMP:
+		data[1] = item->jump.memory_type;
+		data[2] = item->jump.page;
+		set_unaligned_be_u16(&data[3], item->jump.offset);
+		break;
+	case HIDPP20_MACRO_XY:
+		set_unaligned_be_u16(&data[1], item->xy.x);
+		set_unaligned_be_u16(&data[3], item->xy.y);
+		break;
+	default:
+		break;
+	}
+
+	return size;
+}
+
+static int
+hidpp20_onboard_profiles_allocate_macro_sector(struct hidpp20_profiles *profiles,
+					   uint8_t **sectors,
+					   uint16_t sector)
+{
+	if (sector >= profiles->sector_count)
+		return -ENOSPC;
+	if (sectors[sector])
+		return 0;
+
+	sectors[sector] = hidpp20_onboard_profiles_allocate_sector(profiles);
+	memset(sectors[sector], 0xff, profiles->sector_size);
+
+	return 0;
+}
+
+static int
+hidpp20_onboard_profiles_next_macro_sector(const struct hidpp20_profiles *profiles,
+					   uint16_t start)
+{
+	uint16_t sector;
+
+	for (sector = start; sector < profiles->sector_count; sector++) {
+		if (!profiles->macro_sectors_in_use[sector] &&
+		    !profiles->macro_sectors_pending[sector])
+			return sector;
+	}
+
+	return -ENOSPC;
+}
+
+static int
+hidpp20_onboard_profiles_write_macros(struct hidpp20_device *device,
+				      struct hidpp20_profiles *profiles)
+{
+	uint16_t usable_size, offset = 0;
+	uint8_t **sectors;
+	bool *dirty;
+	unsigned int p, b, i;
+	int rc = 0, sector = -1;
+
+	if (profiles->sector_size <= sizeof(uint16_t))
+		return -EINVAL;
+
+	usable_size = profiles->sector_size - sizeof(uint16_t);
+	memset(profiles->macro_sectors_pending,
+	       0,
+	       profiles->sector_count * sizeof(bool));
+	sectors = zalloc(profiles->sector_count * sizeof(*sectors));
+	dirty = zalloc(profiles->sector_count * sizeof(*dirty));
+
+	for (p = 0; p < profiles->num_profiles; p++) {
+		struct hidpp20_profile *profile = &profiles->profiles[p];
+
+		if (!profile->enabled)
+			continue;
+		memset(profile->macro_sector_usage, 0, sizeof(profile->macro_sector_usage));
+
+		for (b = 0; b < profiles->num_buttons; b++) {
+			union hidpp20_macro_data *macro = profile->macros[b];
+			uint16_t length = profile->macro_lengths[b];
+			int first_size;
+
+			if (profile->buttons[b].any.type != HIDPP20_BUTTON_MACRO)
+				continue;
+			if (!macro || length == 0 || length > MAX_MACRO_EVENTS + 1 ||
+			    macro[length - 1].any.type != HIDPP20_MACRO_END) {
+				rc = -EINVAL;
+				goto out;
+			}
+
+			first_size = hidpp20_onboard_profiles_macro_size(macro[0].any.type);
+			if (first_size < 0) {
+				rc = first_size;
+				goto out;
+			}
+			if (sector < 0) {
+				sector = hidpp20_onboard_profiles_next_macro_sector(
+					profiles, profiles->num_profiles + 1);
+				if (sector < 0) {
+					rc = sector;
+					goto out;
+				}
+			}
+
+			/* A new macro can start directly on the next sector; it does not
+			 * need a jump from unused space in the previous one. */
+			if (offset + first_size + (length > 1 ? 5 : 0) > usable_size) {
+				int next_sector = hidpp20_onboard_profiles_next_macro_sector(
+					profiles, sector + 1);
+				if (next_sector < 0) {
+					rc = next_sector;
+					goto out;
+				}
+				sector = next_sector;
+				offset = 0;
+			}
+			if (sector >= profiles->sector_count) {
+				rc = -ENOSPC;
+				goto out;
+			}
+
+			profile->macro_sectors[b] = sector;
+			profile->macro_offsets[b] = offset;
+			profiles->macro_sectors_pending[sector] = true;
+			profile->macro_sector_usage[sector] = true;
+
+			for (i = 0; i < length; i++) {
+				int item_size = hidpp20_onboard_profiles_macro_size(macro[i].any.type);
+				bool last = i + 1 == length;
+
+				if (item_size < 0) {
+					rc = item_size;
+					goto out;
+				}
+
+				if (offset + item_size + (!last ? 5 : 0) > usable_size) {
+					int next_sector = hidpp20_onboard_profiles_next_macro_sector(
+						profiles, sector + 1);
+
+					if (next_sector < 0 ||
+					    offset + 5 > usable_size) {
+						rc = next_sector < 0 ? next_sector : -ENOSPC;
+						goto out;
+					}
+					rc = hidpp20_onboard_profiles_allocate_macro_sector(
+						profiles, sectors, sector);
+					if (rc)
+						goto out;
+					sectors[sector][offset] = HIDPP20_MACRO_JUMP;
+					sectors[sector][offset + 1] = 0;
+					sectors[sector][offset + 2] = next_sector;
+					set_unaligned_be_u16(&sectors[sector][offset + 3], 0);
+					dirty[sector] = true;
+					sector = next_sector;
+					offset = 0;
+					profiles->macro_sectors_pending[sector] = true;
+					profile->macro_sector_usage[sector] = true;
+				}
+
+				rc = hidpp20_onboard_profiles_allocate_macro_sector(
+					profiles, sectors, sector);
+				if (rc)
+					goto out;
+				rc = hidpp20_onboard_profiles_serialize_macro_item(
+					&macro[i], &sectors[sector][offset]);
+				if (rc < 0)
+					goto out;
+				offset += rc;
+				dirty[sector] = true;
+			}
+		}
+	}
+
+	/* Do not expose a profile pointer until every macro sector is ready. */
+	for (sector = 0; sector < profiles->sector_count; sector++) {
+		if (!dirty[sector])
+			continue;
+		rc = hidpp20_onboard_profiles_write_sector(device,
+							 sector,
+							 profiles->sector_size,
+							 sectors[sector],
+							 true);
+		if (rc)
+			goto out;
+		/* Keep successfully written sectors reserved if a later profile or
+		 * dictionary write fails. A successful commit rebuilds this bitmap. */
+		profiles->macro_sectors_in_use[sector] = true;
+	}
+
+out:
+	for (sector = 0; sector < profiles->sector_count; sector++)
+		free(sectors[sector]);
+	free(sectors);
+	free(dirty);
+	return rc;
+}
+
 static int
 hidpp20_onboard_profiles_write_profile(struct hidpp20_device *device,
 				       struct hidpp20_profiles *profiles_list,
@@ -2998,6 +3287,16 @@ hidpp20_onboard_profiles_commit(struct hidpp20_device *device,
 	bool enabled_profile = false;
 	int rc;
 
+	for (i = 0; i < profiles_list->num_profiles; i++)
+		enabled_profile |= profiles_list->profiles[i].enabled;
+
+	if (!enabled_profile && profiles_list->num_profiles > 0)
+		profiles_list->profiles[0].enabled = 1;
+
+	rc = hidpp20_onboard_profiles_write_macros(device, profiles_list);
+	if (rc < 0)
+		return rc;
+
 	for (i = 0; i < profiles_list->num_profiles; i++) {
 		profile = &profiles_list->profiles[i];
 
@@ -3008,22 +3307,25 @@ hidpp20_onboard_profiles_commit(struct hidpp20_device *device,
 			if (rc < 0)
 				return rc;
 
-			enabled_profile = true;
 		}
 	}
 
-	if (!enabled_profile) {
-		if (profiles_list->num_profiles > 0) {
-			profiles_list->profiles[0].enabled = 1;
-			rc = hidpp20_onboard_profiles_write_profile(device,
-			                                            profiles_list,
-			                                            0);
-			if (rc < 0)
-				return rc;
-		}
+	rc = hidpp20_onboard_profiles_write_dict(device, profiles_list);
+	if (rc < 0)
+		return rc;
+
+	memset(profiles_list->macro_sectors_in_use,
+	       0,
+	       profiles_list->sector_count * sizeof(bool));
+	for (i = 0; i < profiles_list->num_profiles; i++) {
+		unsigned int sector;
+
+		for (sector = 0; sector < profiles_list->sector_count; sector++)
+			profiles_list->macro_sectors_in_use[sector] |=
+				profiles_list->profiles[i].macro_sector_usage[sector];
 	}
 
-	return hidpp20_onboard_profiles_write_dict(device, profiles_list);
+	return 0;
 }
 
 static const enum ratbag_button_action_special hidpp20_profiles_specials[] = {
