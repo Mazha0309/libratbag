@@ -896,6 +896,10 @@ int
 hidpp20_onboard_profiles_serialize_macro_item(const union hidpp20_macro_data *item,
 					      uint8_t *data);
 
+bool
+hidpp20_onboard_profiles_macro_repeats(const union hidpp20_macro_data *macro,
+				       uint16_t length);
+
 struct hidpp20_profile {
 	uint16_t address;
 	uint8_t enabled;

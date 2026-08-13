@@ -3036,6 +3036,25 @@ hidpp20_onboard_profiles_serialize_macro_item(const union hidpp20_macro_data *it
 	return size;
 }
 
+bool
+hidpp20_onboard_profiles_macro_repeats(const union hidpp20_macro_data *macro,
+				       uint16_t length)
+{
+	uint16_t i;
+
+	for (i = 0; i < length; i++) {
+		switch (macro[i].any.type) {
+		case HIDPP20_MACRO_REPEAT_WHILE_PRESSED:
+		case HIDPP20_MACRO_REPEAT_UNTIL_CANCELED:
+			return true;
+		default:
+			break;
+		}
+	}
+
+	return false;
+}
+
 static int
 hidpp20_onboard_profiles_allocate_macro_sector(struct hidpp20_profiles *profiles,
 					   uint8_t **sectors,
@@ -3097,6 +3116,8 @@ hidpp20_onboard_profiles_write_macros(struct hidpp20_device *device,
 		for (b = 0; b < profiles->num_buttons; b++) {
 			union hidpp20_macro_data *macro = profile->macros[b];
 			uint16_t length = profile->macro_lengths[b];
+			uint16_t macro_size = 0;
+			bool repeats;
 			int first_size;
 
 			if (profile->buttons[b].any.type != HIDPP20_BUTTON_MACRO)
@@ -3112,6 +3133,24 @@ hidpp20_onboard_profiles_write_macros(struct hidpp20_device *device,
 				rc = first_size;
 				goto out;
 			}
+			repeats = hidpp20_onboard_profiles_macro_repeats(macro, length);
+			for (i = 0; i < length; i++) {
+				int item_size = hidpp20_onboard_profiles_macro_size(macro[i].any.type);
+
+				if (item_size < 0) {
+					rc = item_size;
+					goto out;
+				}
+				macro_size += item_size;
+			}
+			/* The firmware's repeat opcodes restart at offset zero of the
+			 * current sector, not at the binding's start offset. Keep a
+			 * repeating macro wholly inside its own sector so it cannot jump
+			 * into a macro packed before it. */
+			if (repeats && macro_size > usable_size) {
+				rc = -E2BIG;
+				goto out;
+			}
 			if (sector < 0) {
 				sector = hidpp20_onboard_profiles_next_macro_sector(
 					profiles, profiles->num_profiles + 1);
@@ -3123,7 +3162,8 @@ hidpp20_onboard_profiles_write_macros(struct hidpp20_device *device,
 
 			/* A new macro can start directly on the next sector; it does not
 			 * need a jump from unused space in the previous one. */
-			if (offset + first_size + (length > 1 ? 5 : 0) > usable_size) {
+			if ((repeats && offset != 0) ||
+			    offset + first_size + (length > 1 ? 5 : 0) > usable_size) {
 				int next_sector = hidpp20_onboard_profiles_next_macro_sector(
 					profiles, sector + 1);
 				if (next_sector < 0) {
@@ -3152,7 +3192,8 @@ hidpp20_onboard_profiles_write_macros(struct hidpp20_device *device,
 					goto out;
 				}
 
-				if (offset + item_size + (!last ? 5 : 0) > usable_size) {
+				if (!repeats &&
+				    offset + item_size + (!last ? 5 : 0) > usable_size) {
 					int next_sector = hidpp20_onboard_profiles_next_macro_sector(
 						profiles, sector + 1);
 
@@ -3186,6 +3227,14 @@ hidpp20_onboard_profiles_write_macros(struct hidpp20_device *device,
 					goto out;
 				offset += rc;
 				dirty[sector] = true;
+			}
+
+			/* Do not pack another macro after a repeating one either. Apart
+			 * from making the on-device layout unambiguous, this preserves
+			 * offset zero when the profile is rewritten in a different order. */
+			if (repeats) {
+				sector = -1;
+				offset = 0;
 			}
 		}
 	}

@@ -113,6 +113,39 @@ START_TEST(hidpp20_macro_serializer)
 }
 END_TEST
 
+START_TEST(hidpp20_repeating_macro_layout)
+{
+	union hidpp20_macro_data one_shot[] = {
+		{ .button = { HIDPP20_MACRO_BUTTON_DOWN, 1 } },
+		{ .button = { HIDPP20_MACRO_BUTTON_UP, 1 } },
+		{ .any = { HIDPP20_MACRO_END } },
+	};
+	union hidpp20_macro_data wait_for_release[] = {
+		{ .any = { HIDPP20_MACRO_WAIT_FOR_RELEASE } },
+		{ .any = { HIDPP20_MACRO_END } },
+	};
+	union hidpp20_macro_data repeat_while_pressed[] = {
+		{ .button = { HIDPP20_MACRO_BUTTON_DOWN, 1 } },
+		{ .any = { HIDPP20_MACRO_REPEAT_WHILE_PRESSED } },
+		{ .any = { HIDPP20_MACRO_END } },
+	};
+	union hidpp20_macro_data repeat_until_canceled[] = {
+		{ .button = { HIDPP20_MACRO_BUTTON_DOWN, 1 } },
+		{ .any = { HIDPP20_MACRO_REPEAT_UNTIL_CANCELED } },
+		{ .any = { HIDPP20_MACRO_END } },
+	};
+
+	ck_assert(!hidpp20_onboard_profiles_macro_repeats(
+		one_shot, ARRAY_LENGTH(one_shot)));
+	ck_assert(!hidpp20_onboard_profiles_macro_repeats(
+		wait_for_release, ARRAY_LENGTH(wait_for_release)));
+	ck_assert(hidpp20_onboard_profiles_macro_repeats(
+		repeat_while_pressed, ARRAY_LENGTH(repeat_while_pressed)));
+	ck_assert(hidpp20_onboard_profiles_macro_repeats(
+		repeat_until_canceled, ARRAY_LENGTH(repeat_until_canceled)));
+}
+END_TEST
+
 START_TEST(dpi_list_parser)
 {
 	struct testcase {
@@ -168,6 +201,7 @@ test_context_suite(void)
 	tcase_add_test(tc, dpi_range_parser);
 	tcase_add_test(tc, dpi_list_parser);
 	tcase_add_test(tc, hidpp20_macro_serializer);
+	tcase_add_test(tc, hidpp20_repeating_macro_layout);
 
 	suite_add_tcase(s, tc);
 	return s;
