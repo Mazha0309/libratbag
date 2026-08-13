@@ -58,6 +58,9 @@ enum hidpp20_quirk {
 	HIDPP20_QUIRK_G602 = (1 << 1),
 	HIDPP20_QUIRK_G502X_PLUS = (1 << 2), // G502X+ uses 2nd LED slot instead of 1st.
 	HIDPP20_QUIRK_INDEX_OFFSET = (1 << 3), // Device returns 1-indexed profile, decrement by 1.
+	/* The G502 HERO dropped repeated mouse transitions with tested 20ms
+	 * phases; require the tested-safe 25ms minimum instead. */
+	HIDPP20_QUIRK_REPEAT_MOUSE_MIN_25MS = (1 << 4),
 };
 
 struct hidpp20_device {
@@ -897,8 +900,10 @@ hidpp20_onboard_profiles_serialize_macro_item(const union hidpp20_macro_data *it
 					      uint8_t *data);
 
 bool
-hidpp20_onboard_profiles_macro_repeats(const union hidpp20_macro_data *macro,
-				       uint16_t length);
+hidpp20_onboard_profiles_repeat_mouse_timing_is_valid(
+	const union hidpp20_macro_data *macro,
+	uint16_t length,
+	uint16_t minimum_phase_ms);
 
 struct hidpp20_profile {
 	uint16_t address;

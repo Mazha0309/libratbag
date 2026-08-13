@@ -113,36 +113,77 @@ START_TEST(hidpp20_macro_serializer)
 }
 END_TEST
 
-START_TEST(hidpp20_repeating_macro_layout)
+START_TEST(hidpp20_repeating_mouse_timing)
 {
 	union hidpp20_macro_data one_shot[] = {
 		{ .button = { HIDPP20_MACRO_BUTTON_DOWN, 1 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 1 } },
 		{ .button = { HIDPP20_MACRO_BUTTON_UP, 1 } },
 		{ .any = { HIDPP20_MACRO_END } },
 	};
-	union hidpp20_macro_data wait_for_release[] = {
-		{ .any = { HIDPP20_MACRO_WAIT_FOR_RELEASE } },
-		{ .any = { HIDPP20_MACRO_END } },
-	};
-	union hidpp20_macro_data repeat_while_pressed[] = {
+	union hidpp20_macro_data repeat_20ms[] = {
 		{ .button = { HIDPP20_MACRO_BUTTON_DOWN, 1 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 20 } },
+		{ .button = { HIDPP20_MACRO_BUTTON_UP, 1 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 20 } },
 		{ .any = { HIDPP20_MACRO_REPEAT_WHILE_PRESSED } },
 		{ .any = { HIDPP20_MACRO_END } },
 	};
-	union hidpp20_macro_data repeat_until_canceled[] = {
+	union hidpp20_macro_data repeat_25ms[] = {
 		{ .button = { HIDPP20_MACRO_BUTTON_DOWN, 1 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 25 } },
+		{ .button = { HIDPP20_MACRO_BUTTON_UP, 1 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 25 } },
+		{ .any = { HIDPP20_MACRO_REPEAT_WHILE_PRESSED } },
+		{ .any = { HIDPP20_MACRO_END } },
+	};
+	union hidpp20_macro_data split_phase[] = {
+		{ .button = { HIDPP20_MACRO_BUTTON_DOWN, 1 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 10 } },
+		{ .key = { HIDPP20_MACRO_KEY_PRESS, 0, 4 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 15 } },
+		{ .button = { HIDPP20_MACRO_BUTTON_UP, 1 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 25 } },
 		{ .any = { HIDPP20_MACRO_REPEAT_UNTIL_CANCELED } },
 		{ .any = { HIDPP20_MACRO_END } },
 	};
+	union hidpp20_macro_data missing_release[] = {
+		{ .button = { HIDPP20_MACRO_BUTTON_DOWN, 1 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 50 } },
+		{ .any = { HIDPP20_MACRO_REPEAT_WHILE_PRESSED } },
+		{ .any = { HIDPP20_MACRO_END } },
+	};
+	union hidpp20_macro_data keyboard_only[] = {
+		{ .key = { HIDPP20_MACRO_KEY_PRESS, 0, 4 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 1 } },
+		{ .key = { HIDPP20_MACRO_KEY_RELEASE, 0, 4 } },
+		{ .any = { HIDPP20_MACRO_REPEAT_WHILE_PRESSED } },
+		{ .any = { HIDPP20_MACRO_END } },
+	};
+	union hidpp20_macro_data trailing_delay[] = {
+		{ .button = { HIDPP20_MACRO_BUTTON_DOWN, 1 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 20 } },
+		{ .button = { HIDPP20_MACRO_BUTTON_UP, 1 } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 20 } },
+		{ .any = { HIDPP20_MACRO_REPEAT_WHILE_PRESSED } },
+		{ .delay = { HIDPP20_MACRO_DELAY, 100 } },
+		{ .any = { HIDPP20_MACRO_END } },
+	};
 
-	ck_assert(!hidpp20_onboard_profiles_macro_repeats(
-		one_shot, ARRAY_LENGTH(one_shot)));
-	ck_assert(!hidpp20_onboard_profiles_macro_repeats(
-		wait_for_release, ARRAY_LENGTH(wait_for_release)));
-	ck_assert(hidpp20_onboard_profiles_macro_repeats(
-		repeat_while_pressed, ARRAY_LENGTH(repeat_while_pressed)));
-	ck_assert(hidpp20_onboard_profiles_macro_repeats(
-		repeat_until_canceled, ARRAY_LENGTH(repeat_until_canceled)));
+	ck_assert(hidpp20_onboard_profiles_repeat_mouse_timing_is_valid(
+		one_shot, ARRAY_LENGTH(one_shot), 25));
+	ck_assert(!hidpp20_onboard_profiles_repeat_mouse_timing_is_valid(
+		repeat_20ms, ARRAY_LENGTH(repeat_20ms), 25));
+	ck_assert(hidpp20_onboard_profiles_repeat_mouse_timing_is_valid(
+		repeat_25ms, ARRAY_LENGTH(repeat_25ms), 25));
+	ck_assert(hidpp20_onboard_profiles_repeat_mouse_timing_is_valid(
+		split_phase, ARRAY_LENGTH(split_phase), 25));
+	ck_assert(!hidpp20_onboard_profiles_repeat_mouse_timing_is_valid(
+		missing_release, ARRAY_LENGTH(missing_release), 25));
+	ck_assert(hidpp20_onboard_profiles_repeat_mouse_timing_is_valid(
+		keyboard_only, ARRAY_LENGTH(keyboard_only), 25));
+	ck_assert(!hidpp20_onboard_profiles_repeat_mouse_timing_is_valid(
+		trailing_delay, ARRAY_LENGTH(trailing_delay), 25));
 }
 END_TEST
 
@@ -201,7 +242,7 @@ test_context_suite(void)
 	tcase_add_test(tc, dpi_range_parser);
 	tcase_add_test(tc, dpi_list_parser);
 	tcase_add_test(tc, hidpp20_macro_serializer);
-	tcase_add_test(tc, hidpp20_repeating_macro_layout);
+	tcase_add_test(tc, hidpp20_repeating_mouse_timing);
 
 	suite_add_tcase(s, tc);
 	return s;

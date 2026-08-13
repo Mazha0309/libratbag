@@ -616,6 +616,7 @@ hidpp20drv_encode_macro_8100(struct ratbag_device *device,
 			     union hidpp20_macro_data **macro_out,
 			     uint16_t *length_out)
 {
+	struct hidpp20drv_data *drv_data = ratbag_get_drv_data(device);
 	union hidpp20_macro_data *macro;
 	unsigned int i, length = 0;
 
@@ -691,6 +692,14 @@ hidpp20drv_encode_macro_8100(struct ratbag_device *device,
 
 finish:
 	macro[length++].any.type = HIDPP20_MACRO_END;
+	if ((drv_data->dev->quirks & HIDPP20_QUIRK_REPEAT_MOUSE_MIN_25MS) &&
+	    !hidpp20_onboard_profiles_repeat_mouse_timing_is_valid(
+		    macro, length, 25)) {
+		log_error(device->ratbag,
+			  "repeating mouse macros on this device require at least "
+			  "25ms between press and release transitions\n");
+		goto invalid;
+	}
 	*macro_out = macro;
 	*length_out = length;
 	return 0;

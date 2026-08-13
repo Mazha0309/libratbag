@@ -112,6 +112,7 @@ hidpp20_get_quirk_string(enum hidpp20_quirk quirk)
 	CASE_RETURN_STRING(HIDPP20_QUIRK_G602);
 	CASE_RETURN_STRING(HIDPP20_QUIRK_G502X_PLUS);
 	CASE_RETURN_STRING(HIDPP20_QUIRK_INDEX_OFFSET);
+	CASE_RETURN_STRING(HIDPP20_QUIRK_REPEAT_MOUSE_MIN_25MS);
 	}
 
 	abort();
@@ -3037,22 +3038,81 @@ hidpp20_onboard_profiles_serialize_macro_item(const union hidpp20_macro_data *it
 }
 
 bool
-hidpp20_onboard_profiles_macro_repeats(const union hidpp20_macro_data *macro,
-				       uint16_t length)
+hidpp20_onboard_profiles_repeat_mouse_timing_is_valid(
+	const union hidpp20_macro_data *macro,
+	uint16_t length,
+	uint16_t minimum_phase_ms)
 {
-	uint16_t i;
+	struct mouse_transition {
+		uint32_t time;
+		bool down;
+	};
+	struct mouse_transition transitions[16][MAX_MACRO_EVENTS];
+	uint16_t transition_count[16] = {0};
+	uint32_t cycle_time = 0;
+	bool repeats = false;
+	unsigned int bit, i;
 
 	for (i = 0; i < length; i++) {
+		uint16_t buttons;
+
 		switch (macro[i].any.type) {
+		case HIDPP20_MACRO_DELAY:
+			cycle_time += macro[i].delay.time;
+			break;
+		case HIDPP20_MACRO_BUTTON_DOWN:
+		case HIDPP20_MACRO_BUTTON_UP:
+			buttons = macro[i].button.buttons;
+			for (bit = 0; bit < 16; bit++) {
+				struct mouse_transition *transition;
+
+				if (!(buttons & (1U << bit)))
+					continue;
+				if (transition_count[bit] >= MAX_MACRO_EVENTS)
+					return false;
+				transition = &transitions[bit][transition_count[bit]++];
+				transition->time = cycle_time;
+				transition->down =
+					macro[i].any.type == HIDPP20_MACRO_BUTTON_DOWN;
+			}
+			break;
 		case HIDPP20_MACRO_REPEAT_WHILE_PRESSED:
 		case HIDPP20_MACRO_REPEAT_UNTIL_CANCELED:
-			return true;
+			repeats = true;
+			goto parsed;
+		case HIDPP20_MACRO_END:
+			goto parsed;
 		default:
 			break;
 		}
 	}
 
-	return false;
+parsed:
+	if (!repeats)
+		return true;
+
+	for (bit = 0; bit < 16; bit++) {
+		uint16_t count = transition_count[bit];
+
+		if (!count)
+			continue;
+		if (count < 2 || cycle_time < minimum_phase_ms)
+			return false;
+
+		for (i = 0; i < count; i++) {
+			const struct mouse_transition *current = &transitions[bit][i];
+			const struct mouse_transition *next =
+				&transitions[bit][(i + 1) % count];
+			uint32_t phase = next->time >= current->time ?
+					 next->time - current->time :
+					 cycle_time - current->time + next->time;
+
+			if (current->down == next->down || phase < minimum_phase_ms)
+				return false;
+		}
+	}
+
+	return true;
 }
 
 static int
@@ -3116,8 +3176,6 @@ hidpp20_onboard_profiles_write_macros(struct hidpp20_device *device,
 		for (b = 0; b < profiles->num_buttons; b++) {
 			union hidpp20_macro_data *macro = profile->macros[b];
 			uint16_t length = profile->macro_lengths[b];
-			uint16_t macro_size = 0;
-			bool repeats;
 			int first_size;
 
 			if (profile->buttons[b].any.type != HIDPP20_BUTTON_MACRO)
@@ -3133,24 +3191,6 @@ hidpp20_onboard_profiles_write_macros(struct hidpp20_device *device,
 				rc = first_size;
 				goto out;
 			}
-			repeats = hidpp20_onboard_profiles_macro_repeats(macro, length);
-			for (i = 0; i < length; i++) {
-				int item_size = hidpp20_onboard_profiles_macro_size(macro[i].any.type);
-
-				if (item_size < 0) {
-					rc = item_size;
-					goto out;
-				}
-				macro_size += item_size;
-			}
-			/* The firmware's repeat opcodes restart at offset zero of the
-			 * current sector, not at the binding's start offset. Keep a
-			 * repeating macro wholly inside its own sector so it cannot jump
-			 * into a macro packed before it. */
-			if (repeats && macro_size > usable_size) {
-				rc = -E2BIG;
-				goto out;
-			}
 			if (sector < 0) {
 				sector = hidpp20_onboard_profiles_next_macro_sector(
 					profiles, profiles->num_profiles + 1);
@@ -3162,8 +3202,7 @@ hidpp20_onboard_profiles_write_macros(struct hidpp20_device *device,
 
 			/* A new macro can start directly on the next sector; it does not
 			 * need a jump from unused space in the previous one. */
-			if ((repeats && offset != 0) ||
-			    offset + first_size + (length > 1 ? 5 : 0) > usable_size) {
+			if (offset + first_size + (length > 1 ? 5 : 0) > usable_size) {
 				int next_sector = hidpp20_onboard_profiles_next_macro_sector(
 					profiles, sector + 1);
 				if (next_sector < 0) {
@@ -3192,8 +3231,7 @@ hidpp20_onboard_profiles_write_macros(struct hidpp20_device *device,
 					goto out;
 				}
 
-				if (!repeats &&
-				    offset + item_size + (!last ? 5 : 0) > usable_size) {
+				if (offset + item_size + (!last ? 5 : 0) > usable_size) {
 					int next_sector = hidpp20_onboard_profiles_next_macro_sector(
 						profiles, sector + 1);
 
@@ -3227,14 +3265,6 @@ hidpp20_onboard_profiles_write_macros(struct hidpp20_device *device,
 					goto out;
 				offset += rc;
 				dirty[sector] = true;
-			}
-
-			/* Do not pack another macro after a repeating one either. Apart
-			 * from making the on-device layout unambiguous, this preserves
-			 * offset zero when the profile is rewritten in a different order. */
-			if (repeats) {
-				sector = -1;
-				offset = 0;
 			}
 		}
 	}

@@ -187,6 +187,8 @@ hidpp20_quirk_from_string(const char *str)
 		return HIDPP20_QUIRK_G502X_PLUS;
 	if (streq(str, "INDEX_OFFSET"))
 		return HIDPP20_QUIRK_INDEX_OFFSET;
+	if (streq(str, "REPEAT_MOUSE_MIN_25MS"))
+		return HIDPP20_QUIRK_REPEAT_MOUSE_MIN_25MS;
 	return HIDPP20_QUIRK_NONE;
 }
 
